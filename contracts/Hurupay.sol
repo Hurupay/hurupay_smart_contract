@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
 /**
  * @title IERC20
  * @dev Interface for the ERC20 standard as defined in the EIP.
  */
+
 interface IERC20 {
     function totalSupply() external view returns (uint256);
     function balanceOf(address account) external view returns (uint256);
@@ -35,6 +36,7 @@ interface IERC20 {
  * @title Hurupay
  * @dev Smart contract for Hurupay financial platform on BASE network using USDC
  */
+
 contract Hurupay {
     // ============ STATE VARIABLES ============
     address public owner;

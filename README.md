@@ -10,4 +10,4 @@
 
 ## Veify Contract on base scan
 
-- `npx hardhat verify --network base DEPLOYED_CONTRACT_ADDRESS "your_deployed_contract_address_here" "your_initial_fee_here"`
+- `npx hardhat verify --network base DEPLOYED_CONTRACT_ADDRESS "your_token_contract_address" "your_initial_fee_here"`
