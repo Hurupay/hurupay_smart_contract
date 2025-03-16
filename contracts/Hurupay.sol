@@ -1,164 +1,75 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-/**
- * @title IERC20
- * @dev Interface for the ERC20 standard as defined in the EIP.
- */
+contract HurupaySmartContract is ReentrancyGuard, EIP712, Ownable {
+    using SafeERC20 for IERC20;
 
-interface IERC20 {
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(
-        address recipient,
-        uint256 amount
-    ) external returns (bool);
-    function allowance(
-        address owner,
-        address spender
-    ) external view returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function transferFrom(
-        address sender,
-        address recipient,
-        uint256 amount
-    ) external returns (bool);
-
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(
-        address indexed owner,
-        address indexed spender,
-        uint256 value
-    );
-}
-
-/**
- * @title Hurupay
- * @dev Smart contract for Hurupay financial platform on BASE network using USDC
- */
-
-contract Hurupay {
-    // ============ STATE VARIABLES ============
-    address public owner;
-    address public pendingOwner;
     IERC20 public usdc;
-
-    uint256 public withdrawalFeePercentage;
+    uint256 public feePercentage;
     uint256 public constant MAX_FEE_PERCENTAGE = 500; // 5% max fee
+    uint256 public accumulatedFees;
 
-    // Minimum fee in USDC (with 6 decimals) - 0.2 USDC
-    uint256 public minimumFee = 200000;
-
-    // Mapping to store pending withdrawal requests
     mapping(bytes32 => bool) public processedRequests;
 
-    // ============ EVENTS ============
+    // Events remain the same
     event Transfer(
         address indexed from,
         address indexed to,
         uint256 amount,
         uint256 fee
     );
-    event WithdrawalProcessed(
-        address indexed user,
-        uint256 amount,
-        uint256 fee
-    );
-    event OwnershipTransferInitiated(
-        address indexed currentOwner,
-        address indexed pendingOwner
-    );
-    event OwnershipTransferCompleted(
-        address indexed previousOwner,
-        address indexed newOwner
-    );
-    event OwnershipTransferCancelled(address indexed owner);
     event FeeUpdated(uint256 oldFee, uint256 newFee);
-    event MinimumFeeUpdated(uint256 oldMinimumFee, uint256 newMinimumFee);
+    event FeesWithdrawn(address indexed owner, uint256 amount);
 
-    // ============ MODIFIERS ============
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Hurupay: caller is not the owner");
-        _;
-    }
+    // Define EIP-712 typehash
+    bytes32 public constant TRANSFER_TYPEHASH =
+        keccak256(
+            "Transfer(bytes32 requestId,address sender,address recipient,uint256 amount,uint256 deadline,uint256 chainId)"
+        );
 
-    constructor(address _usdcAddress, uint256 _initialFeePercentage) {
+    constructor(
+        address _usdcAddress,
+        uint256 _initialFeePercentage
+    )
+        EIP712("Hurupay", "1") // Name and version for EIP-712
+        Ownable(msg.sender) // Set owner explicitly
+    {
         require(_usdcAddress != address(0), "Hurupay: invalid USDC address");
         require(
             _initialFeePercentage <= MAX_FEE_PERCENTAGE,
             "Hurupay: fee too high"
         );
-
         usdc = IERC20(_usdcAddress);
-        owner = msg.sender;
-        withdrawalFeePercentage = _initialFeePercentage;
+        feePercentage = _initialFeePercentage;
     }
 
-    // ============ USER FUNCTIONS ============
     function getBalance(address _user) external view returns (uint256) {
         return usdc.balanceOf(_user);
     }
 
     function calculateFee(uint256 _amount) public view returns (uint256) {
-        uint256 percentageFee = (_amount * withdrawalFeePercentage) / 10000;
-        uint256 fee = percentageFee > minimumFee ? percentageFee : minimumFee;
+        uint256 fee = (_amount * feePercentage) / 10000;
         require(fee < _amount, "Hurupay: fee exceeds amount");
         return fee;
     }
 
-    function transfer(address _to, uint256 _amount) external returns (bool) {
+    // Fee-less direct transfer
+    function transfer(
+        address _to,
+        uint256 _amount
+    ) external nonReentrant returns (bool) {
         require(_to != address(0), "Hurupay: transfer to zero address");
         require(_amount > 0, "Hurupay: amount must be greater than zero");
 
-        uint256 senderBalance = usdc.balanceOf(msg.sender);
-        require(senderBalance >= _amount, "Hurupay: insufficient balance");
-
-        uint256 fee = calculateFee(_amount);
-        uint256 amountAfterFee = _amount - fee;
-
-        // Transfer fee to owner
-        if (fee > 0) {
-            bool feeSuccess = usdc.transferFrom(msg.sender, owner, fee);
-            require(feeSuccess, "Hurupay: fee transfer failed");
-        }
-
-        // Transfer remaining amount to recipient
-        bool transferSuccess = usdc.transferFrom(
-            msg.sender,
-            _to,
-            amountAfterFee
-        );
-        require(transferSuccess, "Hurupay: transfer failed");
-
-        emit Transfer(msg.sender, _to, amountAfterFee, fee);
-        return true;
-    }
-
-    function withdraw(address _to, uint256 _amount) external returns (bool) {
-        require(_to != address(0), "Hurupay: withdraw to zero address");
-        require(_amount > 0, "Hurupay: amount must be greater than zero");
-
-        uint256 senderBalance = usdc.balanceOf(msg.sender);
-        require(senderBalance >= _amount, "Hurupay: insufficient balance");
-
-        uint256 fee = calculateFee(_amount);
-        uint256 amountAfterFee = _amount - fee;
-
-        // Transfer fee to owner
-        if (fee > 0) {
-            bool feeSuccess = usdc.transferFrom(msg.sender, owner, fee);
-            require(feeSuccess, "Hurupay: fee transfer failed");
-        }
-
-        // Transfer remaining amount to recipient
-        bool transferSuccess = usdc.transferFrom(
-            msg.sender,
-            _to,
-            amountAfterFee
-        );
-        require(transferSuccess, "Hurupay: withdrawal transfer failed");
-
-        emit WithdrawalProcessed(msg.sender, amountAfterFee, fee);
+        // Using SafeERC20
+        usdc.safeTransferFrom(msg.sender, _to, _amount);
+        emit Transfer(msg.sender, _to, _amount, 0); // Fee is 0
         return true;
     }
 
@@ -168,10 +79,8 @@ contract Hurupay {
         address _recipient,
         uint256 _amount,
         uint256 _deadline,
-        uint8 _v,
-        bytes32 _r,
-        bytes32 _s
-    ) external returns (bool) {
+        bytes memory _signature
+    ) external nonReentrant returns (bool) {
         require(_sender != address(0), "Hurupay: invalid sender address");
         require(_recipient != address(0), "Hurupay: invalid recipient address");
         require(_amount > 0, "Hurupay: amount must be greater than zero");
@@ -181,110 +90,81 @@ contract Hurupay {
             "Hurupay: request already processed"
         );
 
-        // Verify signature
-        bytes32 digest = keccak256(
-            abi.encodePacked(
-                "\x19Ethereum Signed Message:\n32",
-                keccak256(
-                    abi.encodePacked(
-                        _requestId,
-                        _sender,
-                        _recipient,
-                        _amount,
-                        _deadline,
-                        address(this)
-                    )
-                )
-            )
-        );
-        address recoveredSigner = ecrecover(digest, _v, _r, _s);
-        require(recoveredSigner == _sender, "Hurupay: invalid signature");
-
-        uint256 senderBalance = usdc.balanceOf(_sender);
-        require(senderBalance >= _amount, "Hurupay: insufficient balance");
-
-        // Mark request as processed
+        // Mark request as processed first (follow checks-effects-interactions)
         processedRequests[_requestId] = true;
 
+        // Verify signature using EIP-712
+        bytes32 structHash = keccak256(
+            abi.encode(
+                TRANSFER_TYPEHASH,
+                _requestId,
+                _sender,
+                _recipient,
+                _amount,
+                _deadline,
+                block.chainid // Including chainId for cross-chain protection
+            )
+        );
+
+        bytes32 hash = _hashTypedDataV4(structHash);
+        address signer = ECDSA.recover(hash, _signature);
+        require(signer == _sender, "Hurupay: invalid signature");
+
+        // Calculate fee
         uint256 fee = calculateFee(_amount);
         uint256 amountAfterFee = _amount - fee;
 
-        // Transfer fee to owner
-        if (fee > 0) {
-            bool feeSuccess = usdc.transferFrom(_sender, owner, fee);
-            require(feeSuccess, "Hurupay: fee transfer failed");
-        }
-
-        // Transfer remaining amount to recipient
-        bool transferSuccess = usdc.transferFrom(
-            _sender,
-            _recipient,
-            amountAfterFee
-        );
-        require(transferSuccess, "Hurupay: transfer failed");
+        // Using SafeERC20 (interactions last)
+        usdc.safeTransferFrom(_sender, address(this), _amount);
+        accumulatedFees += fee; // Effects
+        usdc.safeTransfer(_recipient, amountAfterFee);
 
         emit Transfer(_sender, _recipient, amountAfterFee, fee);
         return true;
     }
 
-    // ============ ADMIN FUNCTIONS ============
+    function withdrawFees() external onlyOwner nonReentrant {
+        uint256 amount = accumulatedFees;
+        require(amount > 0, "Hurupay: no fees to withdraw");
+
+        // Effects before interactions
+        accumulatedFees = 0;
+
+        // Using SafeERC20
+        usdc.safeTransfer(owner(), amount);
+
+        emit FeesWithdrawn(owner(), amount);
+    }
+
     function updateFee(uint256 _newFeePercentage) external onlyOwner {
         require(
             _newFeePercentage <= MAX_FEE_PERCENTAGE,
             "Hurupay: fee too high"
         );
-        require(
-            _newFeePercentage != withdrawalFeePercentage,
-            "Hurupay: fee unchanged"
-        );
-
-        uint256 oldFee = withdrawalFeePercentage;
-        withdrawalFeePercentage = _newFeePercentage;
+        require(_newFeePercentage != feePercentage, "Hurupay: fee unchanged");
+        uint256 oldFee = feePercentage;
+        feePercentage = _newFeePercentage;
         emit FeeUpdated(oldFee, _newFeePercentage);
     }
 
-    function updateMinimumFee(uint256 _newMinimumFee) external onlyOwner {
-        require(_newMinimumFee != minimumFee, "Hurupay: minimum fee unchanged");
+    function recoverERC20(address _token) external onlyOwner nonReentrant {
+        require(_token != address(0), "Hurupay: invalid token address");
 
-        uint256 oldMinimumFee = minimumFee;
-        minimumFee = _newMinimumFee;
-        emit MinimumFeeUpdated(oldMinimumFee, _newMinimumFee);
-    }
-
-    function transferOwnership(address _newOwner) external onlyOwner {
-        require(
-            _newOwner != address(0),
-            "Hurupay: new owner is the zero address"
-        );
-        pendingOwner = _newOwner;
-        emit OwnershipTransferInitiated(owner, pendingOwner);
-    }
-
-    function cancelOwnershipTransfer() external onlyOwner {
-        require(
-            pendingOwner != address(0),
-            "Hurupay: no pending ownership transfer"
-        );
-        pendingOwner = address(0);
-        emit OwnershipTransferCancelled(owner);
-    }
-
-    function acceptOwnership() external {
-        require(
-            msg.sender == pendingOwner,
-            "Hurupay: caller is not the pending owner"
-        );
-        address oldOwner = owner;
-        owner = pendingOwner;
-        pendingOwner = address(0);
-        emit OwnershipTransferCompleted(oldOwner, owner);
-    }
-
-    function recoverERC20(address _token) external onlyOwner {
         IERC20 token = IERC20(_token);
         uint256 balance = token.balanceOf(address(this));
+
+        // If token is USDC, exclude accumulated fees
+        if (_token == address(usdc)) {
+            require(
+                balance > accumulatedFees,
+                "Hurupay: only accumulated fees available"
+            );
+            balance -= accumulatedFees;
+        }
+
         require(balance > 0, "Hurupay: no tokens to recover");
-        bool success = token.transfer(owner, balance);
-        require(success, "Hurupay: token recovery failed");
+
+        // Using SafeERC20
+        token.safeTransfer(owner(), balance);
     }
 }
