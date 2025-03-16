@@ -4,8 +4,7 @@ async function main() {
   // USDC address on Base
   const usdcAddress = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
   const initialFeePercentage = 10;
-
-  const Hurupay = await hre.ethers.getContractFactory("Hurupay");
+  const Hurupay = await hre.ethers.getContractFactory("HurupaySmartContract");
   console.log("Deploying Hurupay...");
 
   // Get the deployment transaction

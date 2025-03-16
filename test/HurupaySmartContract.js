@@ -13,7 +13,7 @@ async function deployHurupayFixture() {
   const mockUSDC = await MockUSDC.deploy();
 
   // Deploy the Hurupay contract
-  const Hurupay = await ethers.getContractFactory("Hurupay");
+  const Hurupay = await ethers.getContractFactory("HurupaySmartContract");
   const hurupay = await Hurupay.deploy(mockUSDC.target, 100); // 1% initial fee
 
   // Mint some USDC to users for testing
